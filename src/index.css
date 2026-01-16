@@ -1,0 +1,7 @@
+:root{--bg:#0f1720;--card:#13171a;--muted:#9aa6b2}
+html,body,#root{height:100%;margin:0}
+body{background:var(--bg);color:#e6eef6}
+a{color:inherit}
+
+/* small helpers */
+.muted{color:var(--muted)}

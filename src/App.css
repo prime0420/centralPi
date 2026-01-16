@@ -1,0 +1,9 @@
+.app-root{display:flex;height:100vh;font-family:Arial,Helvetica,sans-serif;background:#0b0d0f;color:#e6eef6}
+.main-area{flex:1;padding:18px;overflow:auto}
+
+.card{background:#0b0d0f;border-radius:6px;padding:12px;margin:8px;color:#e6eef6}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+
+.hour-row{align-items:center}
+.hour-row strong{color:#e6eef6}
+.hour-row .muted{color:#9aa6b2}
