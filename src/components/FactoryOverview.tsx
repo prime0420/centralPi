@@ -1,30 +1,104 @@
-import React from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import FactoryStatusCard from './cards/FactoryStatusCard'
 import MachineCard from './cards/MachineCard'
+import DateSelector from './DateSelector'
+import { useSelectedDate } from '../context/DateContext'
+import { useSelectedMachine } from '../context/MachineContext'
+import { fetchMachines, fetchLogs, getLogsForDate, aggregateProductionData, calculateMachineHealth, getEventStatus, Machine as ApiMachine, LogEntry } from '../services/api'
 
 type Machine = {id: string; percent: number; partCount: string; productionData?: number[]}
 
-const machines: Machine[] = [
-  {id:'2202605-2 → SM73', percent:59.3, partCount:'117 / 187 Pcs', productionData:[45,50,55,60,58,62,65,60,58,63,66,62,60]},
-  {id:'2407164-1 → IM365', percent:0, partCount:'0 / 1 min', productionData:[0,5,3,0,2,1,0,4,2,0,3,1,0]},
-  {id:'2407237-1 → SM76', percent:70.6, partCount:'112 / 722 Pcs', productionData:[65,70,72,75,73,72,74,76,74,72,71,69,68]},
-  {id:'2407399-1 → SM77', percent:98.5, partCount:'1121 / 1234 Pcs', productionData:[95,96,97,98,99,98,99,100,99,98,97,96,95]},
-  {id:'2202598-3 → SM70', percent:15.2, partCount:'66 / 443 Pcs', productionData:[40,42,45,48,46,44,42,40,38,36,34,35,37]},
-  {id:'2407001-1 → IM200', percent:88.1, partCount:'800 / 908 Pcs', productionData:[85,86,87,88,89,88,89,90,89,88,87,86,85]}
-]
+export default function FactoryOverview({ onMachineSelect }: { onMachineSelect?: () => void }){
+  const { selectedDate } = useSelectedDate()
+  const { setSelectedMachine } = useSelectedMachine()
+  const [machines, setMachines] = useState<Machine[]>([])
+  const [loading, setLoading] = useState(true)
 
-export default function FactoryOverview(){
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true)
+      try {
+        const [machinesData, logsData] = await Promise.all([
+          fetchMachines(),
+          fetchLogs()
+        ])
+
+        // Get logs for selected date
+        const dateLogs = getLogsForDate(logsData, selectedDate)
+        
+        // Group logs by machine
+        const logsByMachine: Record<string, LogEntry[]> = {}
+        dateLogs.forEach(log => {
+          const machineId = log.machine_name
+          if (!logsByMachine[machineId]) logsByMachine[machineId] = []
+          logsByMachine[machineId].push(log)
+        })
+
+        // Build machine list - include ALL machines from API, with or without logs
+        const machineList: Machine[] = machinesData.map(apiMachine => {
+          const machineId = apiMachine.name || apiMachine.machine_name || ''
+          const logs = logsByMachine[machineId] || []
+          
+          // Calculate health percentage based on event status
+          const percent = calculateMachineHealth(logs)
+          
+          // Calculate total production from interval logs
+          const intervalLogs = logs.filter(l => l.event === 'Auto Interval Log')
+          const totalProduced = intervalLogs.reduce((sum, l) => sum + (l.total_count || 0), 0)
+          const estimated = Math.max(totalProduced, logs.length > 0 ? Math.round(totalProduced * 1.2) : 100)
+
+          return {
+            id: machineId,
+            percent: percent || 0,
+            partCount: `${totalProduced} / ${estimated} Pcs`,
+            productionData: aggregateProductionData(logs)
+          }
+        })
+
+        setMachines(machineList)
+      } catch (error) {
+        console.error('Failed to load data:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadData()
+
+    // Refresh data every minute (60000 ms)
+    const interval = setInterval(() => {
+      loadData()
+    }, 60000)
+
+    return () => clearInterval(interval)
+  }, [selectedDate])
+
+  const dateDisplay = selectedDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+
+  const handleMachineClick = (machineId: string) => {
+    setSelectedMachine(machineId)
+    onMachineSelect?.()
+  }
+
   return (
     <div>
-      <h2>Factory (Live) Overview</h2>
+      <DateSelector />
+      <h2>Factory Overview - {dateDisplay}</h2>
+      {loading && <p>Loading...</p>}
       <div style={{display:'grid',gridTemplateColumns:'320px 1fr',gap:12,alignItems:'start'}}>
         <div>
           <FactoryStatusCard machines={machines} />
         </div>
 
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(300px, 1fr))',gap:12}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, 320px)',gap:12}}>
           {machines.map(m=> (
-            <MachineCard key={m.id} id={m.id} percent={m.percent} partCount={m.partCount} productionData={m.productionData} />
+            <div
+              key={m.id}
+              onClick={() => handleMachineClick(m.id)}
+              style={{ cursor: 'pointer' }}
+            >
+              <MachineCard id={m.id} percent={m.percent} partCount={m.partCount} productionData={m.productionData} />
+            </div>
           ))}
         </div>
       </div>

@@ -3,10 +3,10 @@ import React from 'react'
 export type StatusSegment = {
   timeStart: number // 0-60 minutes within the hour
   timeEnd: number
-  status: 'good' | 'warning' | 'bad' | 'none' // none = gray (not built)
+  status: 'good' | 'warning' | 'bad' | 'on' | 'none' // none = gray (not built)
 }
 
-export default function TimelineStrip({segments, showGuides, hoursCount, columnWidths, pixelWidth, windowStart, windowMinutes}:{segments:StatusSegment[]; showGuides?:boolean; hoursCount?:number; columnWidths?:number[]; pixelWidth?:number; windowStart?:number; windowMinutes?:number}){
+export default function TimelineStrip({segments, showGuides, hoursCount, columnWidths, pixelWidth, windowStart}:{segments:StatusSegment[]; showGuides?:boolean; hoursCount?:number; columnWidths?:number[]; pixelWidth?:number; windowStart?:number; windowMinutes?:number}){
   const width = pixelWidth || 820
   const height = 32
   const show = !!showGuides
@@ -30,12 +30,14 @@ export default function TimelineStrip({segments, showGuides, hoursCount, columnW
   const getColor = (status: string) => {
     switch(status) {
       case 'good': return '#17db28'
-      case 'warning': return '#f2ef4c'
+      case 'warning': return '#e9e62e'
       case 'bad': return '#b81919'
-      case 'none': return '#444'
-      default: return '#0b0d0f'
+      case 'on': return '#444'
+      default: return '#000000'
     }
   }
+
+  // console.log("segments:", segments)
 
   const shouldShowDot = (status: string) => status === 'good' || status === 'warning'
 
@@ -60,7 +62,7 @@ export default function TimelineStrip({segments, showGuides, hoursCount, columnW
         const segStart = clamp(localStart)
         const segEnd = clamp(localEnd)
 
-          const minuteToPx = (m:number) => {
+        const minuteToPx = (m:number) => {
           const hourIndex = Math.min(hrs-1, Math.floor(m / 60))
           const hourStartMin = hourIndex * 60
           const localMin = m - hourStartMin
@@ -76,11 +78,6 @@ export default function TimelineStrip({segments, showGuides, hoursCount, columnW
           <rect key={`seg-${i}`} x={startPx} y={3} width={w} height={height-6} fill={getColor(s.status)} rx={0} />
         )
       })}
-
-      {/* short hour ticks (solid) centered vertically within the strip - based on cumulativePx */}
-      {/* {cumulativePx.slice(1, -1).map((px, idx)=> (
-        <line key={`col-${idx}`} x1={px} y1={6} x2={px} y2={height-6} stroke="#fff" strokeWidth={2} />
-      ))} */}
 
       {/* optional guide lines (disabled by default for Timeline view) */}
       {show && Array.from({length:13}).map((_, i)=>{
@@ -99,7 +96,7 @@ export default function TimelineStrip({segments, showGuides, hoursCount, columnW
 
       {show && (() => {
         // build minute resolution status map from segments
-        const minuteStatus: Array<'good'|'warning'|'bad'|'none'> = new Array(60).fill('none')
+        const minuteStatus: Array<'good'|'warning'|'bad'|'on'|'none'> = new Array(60).fill('none')
         segments.forEach(s => {
           const startM = Math.max(0, Math.floor(s.timeStart))
           const endM = Math.min(60, Math.ceil(s.timeEnd))

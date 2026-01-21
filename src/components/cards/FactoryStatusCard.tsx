@@ -17,7 +17,7 @@ export default function FactoryStatusCard({machines}:{machines:Machine[]}){
   const stopped = badCount + noneCount
 
   return (
-    <div className="card" style={{display:'flex',gap:12,alignItems:'center', background:'#241F008F'}}>
+    <div className="card" style={{display:'flex',gap:12,alignItems:'center', background:'#191b1d'}}>
       <div style={{display:'flex',flexDirection:'column',gap:12,}}>
         <div style={{background:'#222',padding:'6px 10px',borderRadius:6,width:110,textAlign:'center'}}>
           <div style={{fontSize:12,color:'#bbb'}}>Stations</div>

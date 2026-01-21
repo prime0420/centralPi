@@ -2,7 +2,7 @@ import React from "react";
 
 type Props = {
   counts: number[];
-  startMinute?: number; // minutes from 5AM base (0..540)
+  startMinute?: number; // minutes from 12AM (midnight) base (0..1440)
   width?: number;
   height?: number;
   threshold?: number;
@@ -17,9 +17,9 @@ function pad2(n: number) {
   return n < 10 ? `0${n}` : `${n}`;
 }
 
-// base is 5:00 AM
-function formatTimeFrom5AM(minFrom5: number) {
-  const total = 5 * 60 + minFrom5; // minutes from midnight
+// base is 12:00 AM (midnight)
+function formatTimeFromMidnight(minFromMidnight: number) {
+  const total = minFromMidnight; // minutes from midnight
   let h24 = Math.floor(total / 60);
   const m = total % 60;
 
@@ -183,9 +183,9 @@ export default function LineChart({
   const windowMinutes = counts.length; // since you slice by minutes
   const tickStep = pickTickStep(windowMinutes);
 
-  // absolute window bounds within 5AM..1PM (0..540)
-  const windowStartAbs = clamp(startMinute, 0, 540);
-  const windowEndAbs = clamp(startMinute + (counts.length - 1), 0, 540);
+  // absolute window bounds within full 24-hour day (0..1440 minutes)
+  const windowStartAbs = clamp(startMinute, 0, 1440);
+  const windowEndAbs = clamp(startMinute + (counts.length - 1), 0, 1440);
 
   const ticks: JSX.Element[] = [];
 
@@ -233,7 +233,7 @@ export default function LineChart({
         fontSize={11}
         textAnchor="middle"
       >
-        {formatTimeFrom5AM(tm)}
+        {formatTimeFromMidnight(tm)}
       </text>
     );
   }
@@ -243,7 +243,7 @@ export default function LineChart({
       <text x={8} y={14} fill="#cfe6df" fontSize={12}>
         Pcs/min
       </text>
-      <svg width={width} height={height} style={{ background: "#0b0d0f" }}>
+      <svg width={width} height={height} style={{ background: "#000000" }}>
 
       
 

@@ -10,9 +10,9 @@ export default function MachineCard({id, percent, partCount, productionData}: Pr
 
   // card color palettes (primary top, secondary bottom)
   const palettes = {
-    good: { primary: '#37c05f', secondary: '#25a94a', text: '#fff' },
+    good: { primary: '#13c247', secondary: '#25a94a', text: '#fff' },
     warning: { primary: '#FFD700', secondary: '#F2C200', text: '#111' },
-    bad: { primary: '#e44b4b', secondary: '#c73a3a', text: '#fff' },
+    bad: { primary: '#e61d1d', secondary: '#c73a3a', text: '#fff' },
     stopped: { primary: '#2b2f33', secondary: '#191b1d', text: '#ddd' }
   }
 
@@ -45,17 +45,17 @@ export default function MachineCard({id, percent, partCount, productionData}: Pr
 
         <div style={{textAlign:'right'}}>
           <div style={{fontSize:36,fontWeight:700,color:accentColor}}>{percent.toFixed(1)}%</div>
-          <div style={{fontSize:11,opacity:0.95,marginTop:6}}>111 / 187 Pcs</div>
+          {/* <div style={{fontSize:11,opacity:0.95,marginTop:6}}>111 / 187 Pcs</div> */}
         </div>
       </div>
 
       {/* divider line */}
       <div style={{height:4, background:accentColor, borderRadius:4, margin:'10px 0'}} />
 
-      {/* Lower area — chart */}
-      {productionData && productionData.length > 0 && (
-        <div style={{background:'rgba(0,0,0,0.06)',padding:8,borderRadius:4}}>
-          {(() => {
+      {/* Lower area — chart (always render for consistent card size) */}
+      <div style={{background:'rgba(0,0,0,0.06)',padding:8,borderRadius:4}}>
+        {productionData && productionData.length > 0 ? (
+          (() => {
             const maxValue = Math.max(...productionData)
 
             // compute "nice" step size and ticks (target ~4 ticks)
@@ -105,9 +105,16 @@ export default function MachineCard({id, percent, partCount, productionData}: Pr
                 })}
               </svg>
             )
-          })()}
-        </div>
-      )}
+          })()
+        ) : (
+          /* Empty state for stopped machines or no data */
+          <svg width="100%" height={84} style={{display:'block'}} viewBox="0 0 100 84" preserveAspectRatio="none">
+            {/* <text x="50" y="42" textAnchor="middle" fontSize="12" fill={textColor} opacity={0.5}>
+              No data
+            </text> */}
+          </svg>
+        )}
+      </div>
     </div>
   )
 }

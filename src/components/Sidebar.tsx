@@ -5,7 +5,7 @@ export default function Sidebar({onNavigate}:{onNavigate:(v:'factory'|'shift'|'t
 
   const asideStyle: React.CSSProperties = {
     width: collapsed ? 56 : 220,
-    background: '#0b1114',
+    background: '#080a0c',
     padding: 12,
     color: '#cde8e1',
     display: 'flex',
