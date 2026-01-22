@@ -3,8 +3,7 @@ import TimelineStrip, { StatusSegment } from './graphs/TimelineStrip'
 import DateSelector from './DateSelector'
 import { useSelectedDate } from '../context/DateContext'
 import { useSelectedMachine } from '../context/MachineContext'
-import { fetchMachines, fetchLogs, getLogsForDate, getEventStatus, getMinuteSecond } from '../services/api'
-import moment from 'moment'
+import { fetchMachines, fetchLogs, getLogsForDate, getEventStatus, getHourMinuteSecond } from '../services/api'
 
 type MachineRow = {id: string; segments: StatusSegment[]; status: string}
 
@@ -49,10 +48,7 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
   // Convert database logs to timeline rows
   const rows = useMemo(() => {
     const dateLogs = logsData.filter(log => log.created_at.startsWith(dateStr))
-
-    // console.log("TimelineView dateLogs:", dateLogs.length, dateLogs)
-    
-    // Group logs by machine for quick lookup
+    // console.log("TimelineView dateLogs for", dateStr, ":", dateLogs)
     const logsByMachine: Record<string, any[]> = {}
     dateLogs.forEach(log => {
       const machineId = log.machine_name
@@ -74,8 +70,8 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
         setPartsRate(parsedRate);
       }
     }
-    console.log("Parsed Parts Rate:", partsRate);
-    console.log("machineData:", machinesData)
+    // console.log("Parsed Parts Rate:", partsRate);
+    // console.log("machineData:", machinesData)
 
     // Build rows for ALL machines from API, with or without logs
     return machinesData.map(apiMachine => {
@@ -84,39 +80,37 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
       const segs: StatusSegment[] = []
       
       // Create segments based on logs
-      const fullDaySeconds =  24 * 60 * 60 * 1000 // 1440000 seconds in full day
+      // const fullDaySeconds = 24 * 3600 // 86400 seconds in full day
+      
       if (machineLogs.length > 0) {
-        console.log("Machine:", machineId, "logs:", machineLogs.length, machineLogs)
-        const segmentCount = Math.min(machineLogs.length, 20)
+        // console.log("Machine:", machineId, "logs:", machineLogs.length, machineLogs)
+        const segmentCount = machineLogs.length
         // const minutesPerSegment = Math.floor(fullDayMinutes / segmentCount)
         // console.log("segmentCount", segmentCount)
 
         for (let i = 0; i < segmentCount; i++) {
-          
-          console.log("events", i, ":", machineLogs[i].event)
           let status = getEventStatus(machineLogs[i].event)
-
-          // console.log("Log", i, ":", machineLogs[i].machine_rate)
-
-          if (partsRate !== undefined) {
-            const percent = partsRate / machineLogs[i].machine_rate
-            console.log("Log", i, "partsRate percent:", percent)
+          if (machineLogs[i].event == "Auto Interval Log") {
+            const percent = machineLogs[i].machine_rate / partsRate
             if (percent >= 0.7) status = 'good'
             else if (percent >= 0.4) status = 'warning'
             else status = 'bad' 
           }
-          const logStart = machineLogs[i] ? getMinuteSecond(machineLogs[i].created_at) : 0
-          const logEnd = machineLogs[i + 1] ? getMinuteSecond(machineLogs[i + 1].created_at) : 0
+          const logStart = machineLogs[i] ? getHourMinuteSecond(machineLogs[i].created_at) : 0
+          const logEnd = machineLogs[i + 1] ? getHourMinuteSecond(machineLogs[i + 1].created_at) : (logStart + 1)
 
           segs.push({
             timeStart: logStart,
             timeEnd: logEnd,
-            status
+            status,
+            hasDot: typeof machineLogs[i].event === 'string' && machineLogs[i].event.trim().toLowerCase() === 'auto interval log'
           })
+
+          // console.log("segs", segs)
         }
       }
       
-      console.log("Machine:", machineId, "segs:", segs)
+      // console.log("Machine:", machineId, "segs:", segs)
       // console.log("Machine_rows:", rows)
 
       // Calculate health
@@ -131,7 +125,7 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
     })
   }, [logsData, dateStr, machinesData])
 
-  console.log("TimelineView rows:", rows)
+  // console.log("TimelineView rows:", rows)
 
   // full 24-hour day: 12AM (0:00) to 12AM next day (24:00)
   const allHourLabels = ['12:00AM','1:00AM','2:00AM','3:00AM','4:00AM','5:00AM','6:00AM','7:00AM','8:00AM','9:00AM','10:00AM','11:00AM','12:00PM','1:00PM','2:00PM','3:00PM','4:00PM','5:00PM','6:00PM','7:00PM','8:00PM','9:00PM','10:00PM','11:00PM','12:00AM']
@@ -177,12 +171,11 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
       <DateSelector />
       <h2>Factory (Timeline) View - {selectedDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</h2>
       {loading && <p>Loading data from database...</p>}
-      {/* {!loading && machines.length === 0 && <p>No machines found in database</p>} */}
       <div className="card">
         {rows.map((r) => {
           const rowPanOffset = getRowPanOffset(r.id)
-          const rowWindowStartMinute = rowPanOffset * 60
-          
+          const rowWindowStartSeconds = Math.round(rowPanOffset * 3600)
+          // console.log("rowPanOffset for", r.id, ":", rowPanOffset, "hours, windowStartSeconds:", rowWindowStartSeconds)
           const baseHour = Math.floor(rowPanOffset)
           const fracHour = rowPanOffset - baseHour
           const rowHeaderLabels = allHourLabels.slice(baseHour, baseHour + viewHours + 1)
@@ -253,32 +246,11 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
                         document.addEventListener('mouseup', up)
                       }}
                     >
-                      <TimelineStrip segments={r.segments} showGuides={false} hoursCount={viewHours} pixelWidth={pixelWidthByMachine[r.id] || 820} windowStart={rowWindowStartMinute} windowMinutes={viewHours*60} />
+                      <TimelineStrip segments={r.segments} showGuides={false} hoursCount={viewHours} pixelWidth={820} windowStart={rowWindowStartSeconds} />
                     </div>
                 </div>
 
-                {/* <div style={{width:96,textAlign:'right',paddingLeft:12}}>
-                  {(() => {
-                    const total = totalMinutes
-                    let good = 0
-                    let warning = 0
-                    r.segments.forEach(s=>{
-                      const len = Math.max(0, Math.min(total, Math.ceil(s.timeEnd)) - Math.max(0, Math.floor(s.timeStart)))
-                      if (s.status === 'good') good += len
-                      if (s.status === 'warning') warning += len
-                    })
-                    const pct = total ? ((good + warning) / total) * 100 : 0
-                    const color = pct > 75 ? '#18b648' : pct > 40 ? '#f2c94c' : '#e03a3a'
-                    return (
-                      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end'}}>
-                        <div style={{color:'#fff',fontWeight:700}}>{pct.toFixed(1)}%</div>
-                        <div style={{width:48,height:6,background:'#222',borderRadius:4,marginTop:6}}>
-                          <div style={{width:`${Math.max(0,Math.min(100,pct))}%`,height:'100%',background:color,borderRadius:4}} />
-                        </div>
-                      </div>
-                    )
-                  })()}
-                </div> */}
+                
               </div>
             </div>
           )

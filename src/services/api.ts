@@ -122,7 +122,7 @@ export function aggregateProductionData(logs: LogEntry[]): number[] {
 }
 
 export function getEventStatus(event?: string): 'good' | 'bad' | 'warning' | 'on' | 'none' {
-  if (!event) return 'on';
+  if (!event) return 'none';
   const e = event.trim().toLowerCase();
   const map: Record<string, 'good' | 'bad' | 'warning' | 'on' | 'none'> = {
     'start button': 'bad',
@@ -139,6 +139,15 @@ export function getMinuteSecond(value: string): number {
   const seconds = date.getSeconds();
 
   return minutes * 60 + seconds;
+}
+
+export function getHourMinuteSecond(value: string): number {
+  const date = new Date(value.replace(" ", "T"));
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const seconds = date.getSeconds();
+
+  return hours * 3600 + minutes * 60 + seconds;
 }
 
 export function calculateMachineHealth(logs: LogEntry[]): number {

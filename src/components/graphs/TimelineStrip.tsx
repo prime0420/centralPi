@@ -1,19 +1,38 @@
 import React from 'react'
 
 export type StatusSegment = {
-  timeStart: number // 0-60 minutes within the hour
+  // time in seconds from midnight (0..86400)
+  timeStart: number
   timeEnd: number
-  status: 'good' | 'warning' | 'bad' | 'on' | 'none' // none = gray (not built)
+  status: 'good' | 'warning' | 'bad' | 'on' | 'none'
+  hasDot?: boolean
 }
 
-export default function TimelineStrip({segments, showGuides, hoursCount, columnWidths, pixelWidth, windowStart}:{segments:StatusSegment[]; showGuides?:boolean; hoursCount?:number; columnWidths?:number[]; pixelWidth?:number; windowStart?:number; windowMinutes?:number}){
+export default function TimelineStrip({
+  segments,
+  showGuides,
+  hoursCount,
+  columnWidths,
+  pixelWidth,
+  windowStart
+}: {
+  segments: StatusSegment[]
+  showGuides?: boolean
+  hoursCount?: number
+  columnWidths?: number[]
+  pixelWidth?: number
+  windowStart?: number // seconds from midnight
+  windowMinutes?: number
+}){
+  // console.log("TimelineStrip segments:", segments)
   const width = pixelWidth || 820
   const height = 32
   const show = !!showGuides
   const hrs = hoursCount && hoursCount > 0 ? hoursCount : 1
-  const totalMinutes = hrs * 60
-  const viewStart = windowStart ?? 0 // in minutes, which minute to start displaying from
-  const viewEnd = viewStart + totalMinutes
+  // work in seconds
+  const totalSeconds = hrs * 3600
+  const viewStart = windowStart ?? 0 // in seconds
+  const viewEnd = viewStart + totalSeconds
   const cols = columnWidths && columnWidths.length === hrs ? columnWidths : new Array(hrs).fill(1/hrs)
 
   // compute pixel widths for each column with rounding but ensure final boundary equals `width`
@@ -33,13 +52,12 @@ export default function TimelineStrip({segments, showGuides, hoursCount, columnW
       case 'warning': return '#e9e62e'
       case 'bad': return '#b81919'
       case 'on': return '#444'
+      case 'none': return '#1a1919'
       default: return '#000000'
     }
   }
 
-  // console.log("segments:", segments)
-
-  const shouldShowDot = (status: string) => status === 'good' || status === 'warning'
+  const clamp = (v:number, min=0, maxV=totalSeconds) => Math.max(min, Math.min(maxV, v))
 
   return (
     <svg width={width} height={height} style={{background:'#0d0f10',borderRadius:0,overflow:'visible'}} shapeRendering="crispEdges">
@@ -48,31 +66,30 @@ export default function TimelineStrip({segments, showGuides, hoursCount, columnW
 
       {/* Colored status segments */}
       {segments.map((s,i)=>{
-        // Check if segment overlaps with the visible window
+
+        // console.log("segmentsTTTTTTT", s)
+
+        // skip if completely outside view
         if (s.timeEnd <= viewStart || s.timeStart >= viewEnd) return null
 
-        // Clamp segment to visible window
-        const visStart = Math.max(s.timeStart, viewStart)
-        const visEnd = Math.min(s.timeEnd, viewEnd)
+        // Clamp segment to visible window and convert to seconds relative to viewStart
+        const visStartAbs = clamp(s.timeStart, viewStart, viewEnd)
+        const visEndAbs = clamp(s.timeEnd, viewStart, viewEnd)
+        const relStart = Math.max(0, visStartAbs - viewStart)
+        const relEnd = Math.max(0, visEndAbs - viewStart)
 
-        // Map to local coordinates (0..totalMinutes) for display
-        const localStart = visStart - viewStart
-        const localEnd = visEnd - viewStart
-        const clamp = (v:number,min=0,max=totalMinutes)=>Math.max(min,Math.min(max,v))
-        const segStart = clamp(localStart)
-        const segEnd = clamp(localEnd)
-
-        const minuteToPx = (m:number) => {
-          const hourIndex = Math.min(hrs-1, Math.floor(m / 60))
-          const hourStartMin = hourIndex * 60
-          const localMin = m - hourStartMin
+        const secondToPx = (relSec:number) => {
+          const clamped = Math.max(0, Math.min(totalSeconds, relSec))
+          const hourIndex = Math.min(hrs - 1, Math.floor(clamped / 3600))
+          const hourStartSec = hourIndex * 3600
+          const localSec = clamped - hourStartSec
           const hourLeft = cumulativePx[hourIndex]
           const hourWidth = colPixels[hourIndex]
-          return hourLeft + Math.round((localMin / 60) * hourWidth)
+          return hourLeft + Math.round((localSec / 3600) * hourWidth)
         }
 
-        const startPx = Math.max(0, minuteToPx(segStart))
-        const endPx = Math.max(0, minuteToPx(segEnd))
+        const startPx = Math.max(0, secondToPx(relStart))
+        const endPx = Math.max(0, secondToPx(relEnd))
         const w = Math.max(1, endPx - startPx)
         return (
           <rect key={`seg-${i}`} x={startPx} y={3} width={w} height={height-6} fill={getColor(s.status)} rx={0} />
@@ -94,19 +111,28 @@ export default function TimelineStrip({segments, showGuides, hoursCount, columnW
         )
       })}
 
+      {/* dots for segments that request them (hasDot) - render max one dot per minute */}
       {show && (() => {
-        // build minute resolution status map from segments
-        const minuteStatus: Array<'good'|'warning'|'bad'|'on'|'none'> = new Array(60).fill('none')
-        segments.forEach(s => {
-          const startM = Math.max(0, Math.floor(s.timeStart))
-          const endM = Math.min(60, Math.ceil(s.timeEnd))
-          for (let m = startM; m < endM; m++) minuteStatus[m] = s.status
+        const seen = new Set<number>()
+        const dots: JSX.Element[] = []
+        segments.forEach((s, idx) => {
+          if (!s.hasDot) return
+          const absMid = Math.floor((s.timeStart + s.timeEnd) / 2)
+          if (absMid <= viewStart || absMid >= viewEnd) return
+          const relMid = Math.max(0, Math.min(totalSeconds, absMid - viewStart))
+          const minuteIndex = Math.floor(relMid / 60)
+          if (seen.has(minuteIndex)) return
+          seen.add(minuteIndex)
+
+          const hourIndex = Math.min(hrs - 1, Math.floor(relMid / 3600))
+          const hourStartSec = hourIndex * 3600
+          const localSec = relMid - hourStartSec
+          const hourLeft = cumulativePx[hourIndex]
+          const hourWidth = colPixels[hourIndex]
+          const cx = Math.floor(hourLeft + Math.round((localSec / 3600) * hourWidth))
+          dots.push(<circle key={`dot-sec-${idx}`} cx={cx} cy={height - 6} r={3} fill="#000" stroke="#fff" strokeWidth={1.6} />)
         })
-        return minuteStatus.map((st, m) => {
-          if (!shouldShowDot(st)) return null
-          const cx = Math.floor(((m + 0.5) / 60) * width)
-          return <circle key={`dot-min-${m}`} cx={cx} cy={height - 6} r={3} fill="#000" stroke="#fff" strokeWidth={1.6} />
-        })
+        return dots
       })()}
     </svg>
   )

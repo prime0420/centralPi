@@ -8,7 +8,25 @@ interface MachineContextType {
 const MachineContext = createContext<MachineContextType | undefined>(undefined)
 
 export function MachineProvider({ children }: { children: React.ReactNode }) {
-  const [selectedMachine, setSelectedMachine] = useState<string | null>(null)
+  // initialize from localStorage so last-selected machine persists between page loads
+  const [selectedMachine, setSelectedMachineState] = useState<string | null>(() => {
+    try {
+      const v = localStorage.getItem('selectedMachine')
+      return v ? v : null
+    } catch (e) {
+      return null
+    }
+  })
+
+  const setSelectedMachine = (machine: string | null) => {
+    try {
+      if (machine === null) localStorage.removeItem('selectedMachine')
+      else localStorage.setItem('selectedMachine', machine)
+    } catch (e) {
+      // ignore storage errors
+    }
+    setSelectedMachineState(machine)
+  }
 
   return (
     <MachineContext.Provider value={{ selectedMachine, setSelectedMachine }}>

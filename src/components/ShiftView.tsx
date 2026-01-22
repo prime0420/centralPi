@@ -4,7 +4,7 @@ import LineChart from './graphs/LineChart'
 import DateSelector from './DateSelector'
 import { useSelectedDate } from '../context/DateContext'
 import { useSelectedMachine } from '../context/MachineContext'
-import { fetchLogs, getEventStatus, groupLogsByHour } from '../services/api'
+import { fetchLogs, getEventStatus, groupLogsByHour, getHourMinuteSecond } from '../services/api'
 
 // Format time as HH:MM
 function formatTime(date: Date) {
@@ -32,6 +32,7 @@ export default function ShiftView(){
   const [loading, setLoading] = useState(true)
   const timeRowsContainerRef = React.useRef<HTMLDivElement | null>(null)
   const hasAutoScrolledRef = React.useRef(false)
+  const [predictedPerHour, setPredictedPerHour] = useState<number>(0);
 
   // Fetch logs when machine or date changes
   useEffect(() => {
@@ -59,65 +60,99 @@ export default function ShiftView(){
     return () => clearInterval(interval)
   }, [selectedMachine, dateStr])
 
-  console.log("current_logs", logs)
+  // console.log("current_logs", logs)
 
   // Convert logs to rows by hour
-  const {rows, minuteCounts, firstProductionHour} = useMemo(() => {
+  const {rows, minuteCounts, firstProductionHour, totalProduced, totalPredicted} = useMemo(() => {
     const logsByHour = groupLogsByHour(logs)
     const labels = ['12AM','1AM','2AM','3AM','4AM','5AM','6AM','7AM','8AM','9AM','10AM','11AM','12PM','1PM','2PM','3PM','4PM','5PM','6PM','7PM','8PM','9PM','10PM','11PM']
     const rows: any[] = []
     const minuteArray: number[] = new Array(24 * 60).fill(0)
     let firstProdHour = -1
 
+    // collect predicted rates from comments per hour and global
+    const predictedFromComments: (number | undefined)[] = new Array(24).fill(undefined)
+    let globalPredicted: number | undefined = undefined
+    for (const l of logs) {
+      if (l.comments && typeof l.comments === 'string') {
+        const m = /Standard Parts Rate:\s*([\d,]+)\s*parts/i.exec(l.comments)
+        if (m && m[1]) {
+          const val = Number(m[1].replace(/,/g, ''))
+          try {
+            const hr = new Date(l.created_at.replace(' ', 'T')).getHours()
+            predictedFromComments[hr] = val
+          } catch (err) {
+            // ignore
+          }
+          if (!globalPredicted) globalPredicted = val
+        }
+      }
+      if (!globalPredicted && l.event && typeof l.event === 'string' && l.event.trim().toLowerCase() === 'start shift' && l.comments) {
+        const m2 = /Standard Parts Rate:\s*([\d,]+)\s*parts/i.exec(l.comments)
+        if (m2 && m2[1]) globalPredicted = Number(m2[1].replace(/,/g, ''))
+      }
+    }
+
+    // temporary array for predicted per hour (may be undefined for hours with no interval logs)
+    const predictedArr: (number | undefined)[] = new Array(24).fill(undefined)
+    let producedTotal = 0
+
     for(let h = 0; h < labels.length; h++){
       const hourKey = h.toString().padStart(2, '0')
       const hourLogs = logsByHour[hourKey] || []
-      
       // Track first hour with ANY logs (not just production)
       if (hourLogs.length > 0 && firstProdHour === -1) {
         firstProdHour = h
       }
-      
-      // Convert hourLogs to status segments
-      const segs: StatusSegment[] = []
-      if (hourLogs.length > 0) {
-        const segmentCount = Math.max(1, Math.ceil(hourLogs.length / 5))
-        const logsPerSegment = Math.ceil(hourLogs.length / segmentCount)
-        
-        for (let s = 0; s < segmentCount; s++) {
-          const segStart = s * logsPerSegment
-          const segEnd = Math.min((s + 1) * logsPerSegment, hourLogs.length)
-          const segLogs = hourLogs.slice(segStart, segEnd)
-          
-          // Determine status based on events
-          const statuses = segLogs.map(l => getEventStatus(l.event))
-          const status = statuses.includes('bad') ? 'bad' : statuses.includes('warning') ? 'warning' : 'good'
-          
-          segs.push({
-            timeStart: s * 12,
-            timeEnd: (s + 1) * 12,
-            status
-          })
-        }
-      }
-      
+
       // Calculate produced parts (sum ALL production, not average)
-      const intervalLogs = hourLogs.filter(l => l.event === 'Auto Interval Log')
+      const intervalLogs = hourLogs.filter(l => (l.event || '').toLowerCase() === 'auto interval log')
       const produced = intervalLogs.length > 0 
         ? Math.round(intervalLogs.reduce((sum, l) => sum + (l.interval_count || 0), 0))
         : 0
-      
-      // Debug: log hours with production or warning
+      producedTotal += produced
+
+      // Determine predicted for this hour only if there are interval logs
+      if (intervalLogs.length > 0) {
+        predictedArr[h] = predictedFromComments[h]
+      } else predictedArr[h] = 0
+
+      // Convert hourLogs to status segments (use absolute seconds)
+      const segs: StatusSegment[] = []
       if (hourLogs.length > 0) {
-        console.log(`Hour ${hourKey} (${labels[h]}): ${hourLogs.length} logs, ${intervalLogs.length} production logs, produced=${produced}`)
+        // sort hourLogs by created_at ascending
+        const sorted = [...hourLogs].sort((a,b)=>new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        const hourEndSec = (h + 1) * 3600
+        for (let i = 0; i < sorted.length; i++) {
+          const cur = sorted[i]
+          const next = sorted[i+1]
+          const startSec = getHourMinuteSecond(cur.created_at)
+          const endSec = next ? Math.min(hourEndSec, getHourMinuteSecond(next.created_at)) : Math.min(hourEndSec, startSec + Math.max(1, Math.round((cur.duration || 60))))
+          let status = getEventStatus(cur.event)
+          const predVal = predictedArr[h]
+          if (predVal && cur.machine_rate) {
+            const percent =  cur.machine_rate / predVal
+            if (percent >= 0.7) status = 'good'
+            else if (percent >= 0.4) status = 'warning'
+            else status = 'bad'
+          }
+          segs.push({
+            timeStart: startSec,
+            timeEnd: endSec,
+            status,
+            hasDot: typeof cur.event === 'string' && cur.event.trim().toLowerCase() === 'auto interval log'
+          })
+        }
       }
-      
+
       rows.push({
         label: labels[h],
         segments: segs,
-        rightCount: `${produced}/${produced > 0 ? Math.round(produced * 1.5) : 0}`
+        rightCount: `${produced}/${predictedArr[h] ?? 0}`,
+        produced,
+        predictedPerHour: predictedArr[h]
       })
-      
+
       // Fill minute array
       const baseMinute = h * 60
       for (let m = 0; m < 60; m++) {
@@ -125,7 +160,23 @@ export default function ShiftView(){
       }
     }
 
-    return { rows, minuteCounts: minuteArray, firstProductionHour: firstProdHour }
+    // carry-forward predicted rates: if hour has no predicted, use previous hour's value
+    for (let h = 0; h < predictedArr.length; h++) {
+      if (predictedArr[h] === undefined) {
+        predictedArr[h] = h > 0 ? predictedArr[h-1] : undefined
+      }
+    }
+
+    // apply carried predictions back to rows and compute total predicted
+    let totalPred = 0
+    for (let h = 0; h < rows.length; h++) {
+      const p = predictedArr[h] ?? 0
+      rows[h].predictedPerHour = p
+      rows[h].rightCount = `${rows[h].produced}/${p}`
+      totalPred += p
+    }
+
+    return { rows, minuteCounts: minuteArray, firstProductionHour: firstProdHour, totalProduced: producedTotal, totalPredicted: totalPred }
   }, [logs])
 
   // Auto-scroll to first production hour when data loads
@@ -139,24 +190,21 @@ export default function ShiftView(){
 
   const { time, period } = formatTime(currentTime)
 
-  // Calculate shift quantity from logs
-  const shiftQuantity = useMemo(() => {
-    const intervalLogs = logs.filter(l => l.event === 'Auto Interval Log')
-    const totalProduced = intervalLogs.reduce((sum, l) => sum + (l.total_count || l.interval_count || 0), 0)
-    const estimated = Math.max(totalProduced, Math.round(totalProduced * 1.2))
-    return {
-      produced: totalProduced,
-      estimated: estimated
-    }
-  }, [logs])
+  // Calculate shift quantity (use totals computed from rows)
+  const shiftQuantity = React.useMemo(() => {
+    const produced = (typeof (totalProduced) === 'number') ? totalProduced : 0
+    const predicted = (typeof (totalPredicted) === 'number') ? totalPredicted : 0
+    const percent = predicted > 0 ? Math.round((produced / predicted) * 1000) / 10 : 0
+    return { produced, predicted, percent }
+  }, [/* totalProduced and totalPredicted come from the rows useMemo */ totalProduced, totalPredicted])
 
   // Update clock every second
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(new Date())
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [])
+  // useEffect(() => {
+  //   const interval = setInterval(() => {
+  //     setCurrentTime(new Date())
+  //   }, 1000)
+  //   return () => clearInterval(interval)
+  // }, [])
 
   // window: shows a portion of the 24-hour day (12AM to 11PM)
   // at zoom 0, show 180 minutes (3 hours); at zoom 100, show 30 minutes (30 mins)
@@ -265,8 +313,12 @@ export default function ShiftView(){
           <div style={{flex:1, display:'flex',flexDirection:'column',alignItems:'flex-end'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',width:'100%',marginBottom:16}}>
               <div style={{marginBottom:0}}>
-                <div style={{fontSize:12, color:'#9ca3af', marginBottom:0}}>SHIFT QUANTITY</div>
-                  <div style={{fontSize:32, fontWeight:'bold', display:'flex', color:'#ffffff'}}>{shiftQuantity.produced.toLocaleString()}<p style={{fontSize:11, color:'#ffffff', marginTop: 18,}}>/ {shiftQuantity.estimated.toLocaleString()} pcs</p></div>
+                <div style={{fontSize:12, color:'#9ca3af', marginBottom:6}}>SHIFT QUANTITY</div>
+                <div style={{display:'flex',alignItems:'baseline',gap:12}}>
+                  <div style={{fontSize:32, fontWeight:'bold', color:'#ffffff'}}>{shiftQuantity.produced.toLocaleString()}</div>
+                  <div style={{fontSize:11, color:'#ffffff', marginTop: 6}}>/ {shiftQuantity.predicted.toLocaleString()} pcs</div>
+                  <div style={{marginLeft:12, color:'#18b648', fontWeight:700, fontSize:20}}>{shiftQuantity.percent}%</div>
+                </div>
               </div>
               <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
                 {/* Digital Clock */}
@@ -418,7 +470,7 @@ export default function ShiftView(){
               <div key={idx} className="hour-row" style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,paddingLeft:8,paddingRight:8}}>
                 <div style={{width:64,textAlign:'right',paddingRight:8,color:'#cbd5da',fontFamily:'monospace'}}><strong>{r.label}</strong></div>
                 <div style={{flex:1}}>
-                  <TimelineStrip segments={r.segments} showGuides={true} />
+                  <TimelineStrip segments={r.segments} showGuides={true} hoursCount={1} windowStart={idx * 3600} />
                 </div>
                 <div style={{width:96,textAlign:'right',paddingLeft:12,color:'#9fe49b'}}><strong>{r.rightCount}</strong></div>
               </div>
