@@ -1,10 +1,12 @@
 import React, { useMemo, useState, useEffect } from 'react'
+import type { Socket } from 'socket.io-client';
 import FactoryStatusCard from './cards/FactoryStatusCard'
 import MachineCard from './cards/MachineCard'
 import DateSelector from './DateSelector'
 import { useSelectedDate } from '../context/DateContext'
 import { useSelectedMachine } from '../context/MachineContext'
 import { fetchMachines, fetchLogs, getLogsForDate, aggregateProductionData, calculateMachineHealth, getEventStatus, Machine as ApiMachine, LogEntry } from '../services/api'
+import socket from '../lib/clientSocket'
 
 type Machine = {id: string; percent: number; partCount: string; productionData?: number[]}
 
@@ -29,7 +31,8 @@ export default function FactoryOverview({ onMachineSelect }: { onMachineSelect?:
         // Group logs by machine
         const logsByMachine: Record<string, LogEntry[]> = {}
         dateLogs.forEach(log => {
-          const machineId = log.machine_name
+          const machineId = String(log.machine_name || '')
+          if (!machineId) return // skip logs without machine name
           if (!logsByMachine[machineId]) logsByMachine[machineId] = []
           logsByMachine[machineId].push(log)
         })
@@ -65,12 +68,23 @@ export default function FactoryOverview({ onMachineSelect }: { onMachineSelect?:
 
     loadData()
 
+    // subscribe to real-time log events to refresh overview
+    const onLogCreated = () => {
+      // simply refresh machines and logs for the selected date
+      loadData()
+    }
+
+    socket.on('log-created', onLogCreated)
+
     // Refresh data every minute (60000 ms)
     const interval = setInterval(() => {
       loadData()
     }, 60000)
 
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      socket.off('log-created', onLogCreated)
+    }
   }, [selectedDate])
 
   const dateDisplay = selectedDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
@@ -85,7 +99,7 @@ export default function FactoryOverview({ onMachineSelect }: { onMachineSelect?:
       <DateSelector />
       <h2>Factory Overview - {dateDisplay}</h2>
       {loading && <p>Loading...</p>}
-      <div style={{display:'grid',gridTemplateColumns:'320px 1fr',gap:12,alignItems:'start'}}>
+      <div style={{display:'grid',gridTemplateColumns:'170px 1fr',gap:12,alignItems:'start'}}>
         <div>
           <FactoryStatusCard machines={machines} />
         </div>

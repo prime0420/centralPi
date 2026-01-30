@@ -1,4 +1,5 @@
 import React, {useState} from 'react'
+import type { Socket } from 'socket.io-client';
 
 export default function Sidebar({onNavigate}:{onNavigate:(v:'factory'|'shift'|'timeline')=>void}){
   const [collapsed, setCollapsed] = useState(false)

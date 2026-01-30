@@ -45,9 +45,9 @@ export default function FactoryStatusCard({machines}:{machines:Machine[]}){
         {/* </div> */}
       </div>
 
-      <div style={{flex:1,display:'flex',justifyContent:'center'}}>
+      {/* <div style={{flex:1,display:'flex',justifyContent:'center'}}>
         <CircularHealth percent={avg} />
-      </div>
+      </div> */}
     </div>
   )
 }

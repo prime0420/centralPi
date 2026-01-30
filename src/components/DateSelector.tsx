@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import type { Socket } from 'socket.io-client';
 import { useSelectedDate } from '../context/DateContext'
 import { fetchLogs, getAvailableDates } from '../services/api'
 import './DateSelector.css'

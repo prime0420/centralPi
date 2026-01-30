@@ -13,7 +13,7 @@ export default function MachineCard({id, percent, partCount, productionData}: Pr
     good: { primary: '#13c247', secondary: '#25a94a', text: '#fff' },
     warning: { primary: '#FFD700', secondary: '#F2C200', text: '#111' },
     bad: { primary: '#e61d1d', secondary: '#c73a3a', text: '#fff' },
-    stopped: { primary: '#2b2f33', secondary: '#191b1d', text: '#ddd' }
+    stopped: { primary: '#2b2f33', secondary: '#303030', text: '#ddd' }
   }
 
   const palette = isStopped ? palettes.stopped : isGood ? palettes.good : isWarning ? palettes.warning : palettes.bad

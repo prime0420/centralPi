@@ -1,9 +1,10 @@
 import React, {useMemo, useState, useRef, useEffect} from 'react'
+import type { Socket } from 'socket.io-client';
 import TimelineStrip, { StatusSegment } from './graphs/TimelineStrip'
 import DateSelector from './DateSelector'
 import { useSelectedDate } from '../context/DateContext'
 import { useSelectedMachine } from '../context/MachineContext'
-import { fetchMachines, fetchLogs, getLogsForDate, getEventStatus, getHourMinuteSecond } from '../services/api'
+import { fetchMachines, fetchLogs, groupLogsByHour, getEventStatus, getHourMinuteSecond } from '../services/api'
 
 type MachineRow = {id: string; segments: StatusSegment[]; status: string}
 
@@ -13,7 +14,6 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
   const dateStr = selectedDate.toISOString().split('T')[0]
   const [machinesData, setMachinesData] = useState<any[]>([])
   const [logsData, setLogsData] = useState<any[]>([])
-  const [partsRate, setPartsRate] = useState<any>()
   const [loading, setLoading] = useState(true)
 
   // Fetch machines and logs from database
@@ -43,12 +43,10 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
     return () => clearInterval(interval)
   }, [])
 
-  // console.log("TimelineView logsData:", logsData)
-
   // Convert database logs to timeline rows
   const rows = useMemo(() => {
     const dateLogs = logsData.filter(log => log.created_at.startsWith(dateStr))
-    // console.log("TimelineView dateLogs for", dateStr, ":", dateLogs)
+   
     const logsByMachine: Record<string, any[]> = {}
     dateLogs.forEach(log => {
       const machineId = log.machine_name
@@ -56,72 +54,78 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
       logsByMachine[machineId].push(log)
     })
 
-    for (let i = 0; i < logsData.length; i++) {
-      const log = logsData[i];
-      // Extract Standard Parts Rate number if present on this log
-      let parsedRate: number | undefined = undefined;
-      if (typeof log.comments === 'string' && log.event.trim().toLowerCase() === 'start shift') {
-        const rateMatch = /Standard Parts Rate:\s*([\d,]+)\s*parts/i.exec(log.comments);
-        if (rateMatch && rateMatch[1]) {
-          parsedRate = Number(rateMatch[1].replace(/,/g, ''));
-        }
-      }
-      if (parsedRate !== undefined) {
-        setPartsRate(parsedRate);
-      }
-    }
-    // console.log("Parsed Parts Rate:", partsRate);
-    // console.log("machineData:", machinesData)
-
     // Build rows for ALL machines from API, with or without logs
     return machinesData.map(apiMachine => {
       const machineId = apiMachine.name || apiMachine.machine_name || ''
       const machineLogs = logsByMachine[machineId] || []
-      const segs: StatusSegment[] = []
-      
-      // Create segments based on logs
-      // const fullDaySeconds = 24 * 3600 // 86400 seconds in full day
-      
-      if (machineLogs.length > 0) {
-        // console.log("Machine:", machineId, "logs:", machineLogs.length, machineLogs)
-        const segmentCount = machineLogs.length
-        // const minutesPerSegment = Math.floor(fullDayMinutes / segmentCount)
-        // console.log("segmentCount", segmentCount)
-
-        for (let i = 0; i < segmentCount; i++) {
-          let status = getEventStatus(machineLogs[i].event)
-          if (machineLogs[i].event == "Auto Interval Log") {
-            const percent = machineLogs[i].machine_rate / partsRate
-            if (percent >= 0.7) status = 'good'
-            else if (percent >= 0.4) status = 'warning'
-            else status = 'bad' 
+      // compute predicted rates per-hour for this machine from comments/global
+      const predictedFromComments: (number | undefined)[] = new Array(24).fill(undefined)
+      // let globalPredicted: number | undefined = undefined
+      machineLogs.forEach(l => {
+        if (l.comments && typeof l.comments === 'string') {
+          const m = /Standard Parts Rate:\s*([\d,]+)\s*parts/i.exec(l.comments)
+          if (m && m[1]) {
+            const val = Number(m[1].replace(/,/g, ''))
+            try {
+              const hr = new Date(l.created_at.replace(' ', 'T')).getHours()
+              predictedFromComments[hr] = val
+            } catch (e) {
+            }
           }
-          const logStart = machineLogs[i] ? getHourMinuteSecond(machineLogs[i].created_at) : 0
-          const logEnd = machineLogs[i + 1] ? getHourMinuteSecond(machineLogs[i + 1].created_at) : (logStart + 1)
+        }
+      })
 
-          segs.push({
-            timeStart: logStart,
-            timeEnd: logEnd,
-            status,
-            hasDot: typeof machineLogs[i].event === 'string' && machineLogs[i].event.trim().toLowerCase() === 'auto interval log'
-          })
+      // build predicted per-hour only for hours with production
+      const predictedArr: (number | undefined)[] = new Array(24).fill(undefined)
+      for (let h = 0; h < 24; h++) {
+        const hourIntervalSum = machineLogs.filter(l => (l.event || '').toLowerCase() === 'auto interval log' && new Date(l.created_at.replace(' ', 'T')).getHours() === h)
+          .reduce((s, l) => s + (l.interval_count || 0), 0)
+        if (hourIntervalSum > 0) {
+          predictedArr[h] = predictedFromComments[h]
+          if (predictedArr[h] === undefined) {
+            predictedArr[h] = predictedArr[h - 1]
+          }
+        } else predictedArr[h] = 0
+      }
 
-          // console.log("segs", segs)
+      console.log("Predicted array ", predictedArr)
+
+      const totalPredicted = predictedArr.reduce<number>(
+        (s, v) => s + (v ?? 0),
+        0
+      );
+
+      const producedTotal = machineLogs.filter(l => (l.event || '').toLowerCase() === 'auto interval log').reduce((s, l) => s + (l.interval_count || 0), 0)
+
+      // build segments using per-log rates and per-hour predicted
+      const segs: StatusSegment[] = []
+      if (machineLogs.length > 0) {
+        const sorted = [...machineLogs].sort((a,b)=>new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        for (let i = 0; i < sorted.length; i++) {
+          const cur = sorted[i]
+          const next = sorted[i+1]
+          let status = getEventStatus(cur.event)
+          if ((cur.event || '').toLowerCase() === 'auto interval log' && cur.machine_rate) {
+            const hr = Math.min(23, Math.floor(getHourMinuteSecond(cur.created_at) / 3600))
+            const predVal = predictedArr[hr]
+            if (predVal && predVal > 0) {
+              const percent = cur.machine_rate / predVal
+              if (percent >= 0.7) status = 'good'
+              else if (percent >= 0.4) status = 'warning'
+              else status = 'bad'
+            }
+          }
+          const logStart = getHourMinuteSecond(cur.created_at)
+          const logEnd = next ? getHourMinuteSecond(next.created_at) : (logStart + 1)
+          segs.push({ timeStart: logStart, timeEnd: logEnd, status, hasDot: (cur.event || '').toLowerCase() === 'auto interval log' })
         }
       }
-      
-      // console.log("Machine:", machineId, "segs:", segs)
-      // console.log("Machine_rows:", rows)
 
-      // Calculate health
       const goodCount = machineLogs.filter(l => getEventStatus(l.event) === 'good').length
       const health = machineLogs.length > 0 ? Math.round((goodCount / machineLogs.length) * 100) : 0
-      
-      return {
-        id: machineId,
-        segments: segs,
-        status: health > 70 ? 'Good' : health > 40 ? 'Warning' : 'bad'
-      }
+      const percent = totalPredicted > 0 ? Math.round((producedTotal / totalPredicted) * 1000) / 10 : 0
+
+      return { id: machineId, segments: segs, status: health > 70 ? 'Good' : health > 40 ? 'Warning' : 'bad', producedTotal, totalPredicted, percent }
     })
   }, [logsData, dateStr, machinesData])
 
@@ -166,13 +170,41 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
   // per-row drag-to-pan state
   const rowDragState = useRef<{machineId?:string, dragging:boolean, startX:number, startOffset:number, container?:HTMLElement}>({dragging:false,startX:0,startOffset:0})
 
+  // Initialize per-row pan offsets so the first production time for each machine is visible on first render.
+  // Do not override offsets the user already set.
+  useEffect(() => {
+    if (!rows || rows.length === 0) return
+    setRowPanOffsets(prev => {
+      const next = {...prev}
+      let changed = false
+      rows.forEach(r => {
+        if (Object.prototype.hasOwnProperty.call(prev, r.id)) return // keep existing
+        // find earliest meaningful segment time (exclude 'none')
+        const segs: StatusSegment[] = r.segments || []
+        if (!segs || segs.length === 0) return
+        let minSec: number | null = null
+        for (const s of segs) {
+          if (!s) continue
+          if (s.status === 'none') continue
+          if (minSec === null || s.timeStart < minSec) minSec = s.timeStart
+        }
+        if (minSec === null) return
+        const hour = Math.floor(minSec / 3600)
+        const clamped = Math.max(0, Math.min(maxPanOffset, hour))
+        next[r.id] = clamped
+        changed = true
+      })
+      return changed ? next : prev
+    })
+  }, [rows])
+
   return (
     <div>
       <DateSelector />
       <h2>Factory (Timeline) View - {selectedDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</h2>
       {loading && <p>Loading data from database...</p>}
       <div className="card">
-        {rows.map((r) => {
+        {rows.map((r: any) => {
           const rowPanOffset = getRowPanOffset(r.id)
           const rowWindowStartSeconds = Math.round(rowPanOffset * 3600)
           // console.log("rowPanOffset for", r.id, ":", rowPanOffset, "hours, windowStartSeconds:", rowWindowStartSeconds)
@@ -250,6 +282,13 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
                     </div>
                 </div>
 
+                <div style={{width:96, display:'flex', alignItems:'center', justifyContent:'center'}}>
+                  {typeof r.totalPredicted === 'number' && r.totalPredicted > 0 ? (
+                    <div style={{color:'#ffffff', fontWeight:700, fontSize:13}}>{`${r.percent}%`}</div>
+                  ) : (
+                    <div style={{color:'#999999', fontSize:13}}>-</div>
+                  )}
+                </div>
                 
               </div>
             </div>

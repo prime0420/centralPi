@@ -3,18 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "react-scripts": "5.0.1",
     "moment": "^2.29.4",
-    "react-calendar-timeline": "^0.27.0"
+    "next": "^16.1.6",
+    "react": "^18.2.0",
+    "react-calendar-timeline": "^0.27.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
-    "typescript": "4.9.5",
+    "@types/moment": "^2.13.0",
+    "@types/next": "^8.0.7",
     "@types/react": "18.2.21",
     "@types/react-dom": "18.2.7",
-    "@types/moment": "^2.13.0",
-    "concurrently": "^8.2.0"
+    "concurrently": "^8.2.0",
+    "typescript": "4.9.5"
   },
   "scripts": {
     "dev": "react-scripts start",

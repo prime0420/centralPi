@@ -1,10 +1,12 @@
 import React, {useMemo, useState, useEffect} from 'react'
+import type { Socket } from 'socket.io-client';
 import TimelineStrip, { StatusSegment } from './graphs/TimelineStrip'
 import LineChart from './graphs/LineChart'
 import DateSelector from './DateSelector'
 import { useSelectedDate } from '../context/DateContext'
 import { useSelectedMachine } from '../context/MachineContext'
 import { fetchLogs, getEventStatus, groupLogsByHour, getHourMinuteSecond } from '../services/api'
+import socket from '../lib/clientSocket'
 
 // Format time as HH:MM
 function formatTime(date: Date) {
@@ -32,7 +34,6 @@ export default function ShiftView(){
   const [loading, setLoading] = useState(true)
   const timeRowsContainerRef = React.useRef<HTMLDivElement | null>(null)
   const hasAutoScrolledRef = React.useRef(false)
-  const [predictedPerHour, setPredictedPerHour] = useState<number>(0);
 
   // Fetch logs when machine or date changes
   useEffect(() => {
@@ -41,7 +42,7 @@ export default function ShiftView(){
       try {
         if (selectedMachine) {
           const allLogs = await fetchLogs(selectedMachine)
-          const filteredLogs = allLogs.filter(log => log.created_at.startsWith(dateStr))
+          const filteredLogs = allLogs.filter(log => String(log.created_at || '').startsWith(dateStr))
           setLogs(filteredLogs)
         }
       } catch (error) {
@@ -52,12 +53,32 @@ export default function ShiftView(){
     }
     loadLogs()
 
+    // subscribe to real-time log events and refresh logs when relevant
+    const onLogCreated = (payload: any) => {
+      try {
+        const log = payload && payload.log
+        if (!log) return
+        // if the log belongs to the selected machine and selected date, refresh
+        const logDate = String(log.created_at || '').split(/[ T]/)[0]
+        if (selectedMachine && log.machine_name === selectedMachine && logDate === dateStr) {
+          loadLogs()
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    socket.on('log-created', onLogCreated)
+
     // Refresh logs every minute (60000 ms)
     const interval = setInterval(() => {
       loadLogs()
     }, 60000)
 
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      socket.off('log-created', onLogCreated)
+    }
   }, [selectedMachine, dateStr])
 
   // console.log("current_logs", logs)
@@ -70,26 +91,21 @@ export default function ShiftView(){
     const minuteArray: number[] = new Array(24 * 60).fill(0)
     let firstProdHour = -1
 
-    // collect predicted rates from comments per hour and global
+    // collect predicted rates from comments per hour 
     const predictedFromComments: (number | undefined)[] = new Array(24).fill(undefined)
-    let globalPredicted: number | undefined = undefined
     for (const l of logs) {
       if (l.comments && typeof l.comments === 'string') {
         const m = /Standard Parts Rate:\s*([\d,]+)\s*parts/i.exec(l.comments)
         if (m && m[1]) {
           const val = Number(m[1].replace(/,/g, ''))
           try {
-            const hr = new Date(l.created_at.replace(' ', 'T')).getHours()
+            const hr = new Date(String(l.created_at || '').replace(' ', 'T')).getHours()
+            console.log("Setting predicted for hour", hr, "to", val)
             predictedFromComments[hr] = val
           } catch (err) {
             // ignore
           }
-          if (!globalPredicted) globalPredicted = val
         }
-      }
-      if (!globalPredicted && l.event && typeof l.event === 'string' && l.event.trim().toLowerCase() === 'start shift' && l.comments) {
-        const m2 = /Standard Parts Rate:\s*([\d,]+)\s*parts/i.exec(l.comments)
-        if (m2 && m2[1]) globalPredicted = Number(m2[1].replace(/,/g, ''))
       }
     }
 
@@ -115,21 +131,26 @@ export default function ShiftView(){
       // Determine predicted for this hour only if there are interval logs
       if (intervalLogs.length > 0) {
         predictedArr[h] = predictedFromComments[h]
-      } else predictedArr[h] = 0
+        if (predictedArr[h] === undefined) {
+          predictedArr[h] = predictedArr[h - 1]
+        }
+      }  else predictedArr[h] = 0
 
+      console.log("Predicted for hour", h, "is", predictedArr[h])
       // Convert hourLogs to status segments (use absolute seconds)
       const segs: StatusSegment[] = []
       if (hourLogs.length > 0) {
         // sort hourLogs by created_at ascending
-        const sorted = [...hourLogs].sort((a,b)=>new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-        const hourEndSec = (h + 1) * 3600
-        for (let i = 0; i < sorted.length; i++) {
-          const cur = sorted[i]
-          const next = sorted[i+1]
-          const startSec = getHourMinuteSecond(cur.created_at)
-          const endSec = next ? Math.min(hourEndSec, getHourMinuteSecond(next.created_at)) : Math.min(hourEndSec, startSec + Math.max(1, Math.round((cur.duration || 60))))
+        // const sorted = [...hourLogs].sort((a,b)=>new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        // const hourEndSec = (h + 1) * 3600
+        for (let i = 0; i < hourLogs.length; i++) {
+          const cur = hourLogs[i]
+          const next = hourLogs[i+1]
+          const startSec = getHourMinuteSecond(String(cur.created_at || ''))
+          const endSec = next ? getHourMinuteSecond(String(next.created_at || '')) : startSec + 1
           let status = getEventStatus(cur.event)
           const predVal = predictedArr[h]
+          console.log("predicted value:", predictedArr[h])
           if (predVal && cur.machine_rate) {
             const percent =  cur.machine_rate / predVal
             if (percent >= 0.7) status = 'good'
@@ -303,7 +324,10 @@ export default function ShiftView(){
   }, [windowMinutes, maxOffset])
   return (
     <div>
-      <DateSelector />
+      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16}}>
+        <DateSelector />
+        
+      </div>
       <h2>The Machine (Shift) View - {selectedMachine ? selectedMachine : 'All Machines'} - {selectedDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</h2>
       {loading && <p>Loading data from database...</p>}
       {logs.length === 0 && !loading && <p>No data available for this selection</p>}
@@ -315,144 +339,145 @@ export default function ShiftView(){
               <div style={{marginBottom:0}}>
                 <div style={{fontSize:12, color:'#9ca3af', marginBottom:6}}>SHIFT QUANTITY</div>
                 <div style={{display:'flex',alignItems:'baseline',gap:12}}>
-                  <div style={{fontSize:32, fontWeight:'bold', color:'#ffffff'}}>{shiftQuantity.produced.toLocaleString()}</div>
-                  <div style={{fontSize:11, color:'#ffffff', marginTop: 6}}>/ {shiftQuantity.predicted.toLocaleString()} pcs</div>
-                  <div style={{marginLeft:12, color:'#18b648', fontWeight:700, fontSize:20}}>{shiftQuantity.percent}%</div>
+                  <div style={{fontSize:32, fontWeight:'lighter', fontFamily:'Inter, system-ui, sans-serif', color:'#ffffff'}}>{shiftQuantity.produced.toLocaleString()}</div>
+                  <div style={{fontSize:14, color:'#ffffff', marginTop: 6}}>/ {shiftQuantity.predicted.toLocaleString()} pcs</div>
+                  <div style={{marginLeft:12, fontFamily:'Inter, system-ui, sans-serif', color:'#22C55E', fontWeight:400, fontSize:28}}>{shiftQuantity.percent}%</div>
                 </div>
               </div>
-              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
-                {/* Digital Clock */}
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    fontFamily: 'monospace',
-                    color: '#fff',
-                    padding: '8px 16px',
-                  }}
-                >
-                  {/* Main Time */}
-                  <div
-                    style={{
-                      fontSize: 48,
-                      fontWeight: 'bold',
-                      lineHeight: 1,
-                    }}
-                  >
-                    {time}
-                  </div>
+              
+            </div>
+          </div>
+          {/* Line chart showing per-minute counts for the selected window */}
+          <div style={{display:'flex',alignItems:'stretch',gap:8,marginBottom:12}}>
+            <div style={{flex:'0 0 auto', width:760, position:'relative'}}>
+              <div
+                ref={chartContainerRef}
+                onMouseDown={(e)=>{
+                  dragState.current.dragging = true
+                  dragState.current.startX = e.clientX
+                  dragState.current.startOffset = windowOffset
+                  const move = (ev: any)=>{
+                    const evt = ev as MouseEvent
+                    let clientX = evt.clientX
+                    const deltaX = clientX - dragState.current.startX
+                    const container = chartContainerRef.current
+                    if(!container) return
+                    const rect = container.getBoundingClientRect()
+                    const chartW = rect.width
+                    if(chartW <= 0) return
+                    const deltaMinutes = Math.round(-deltaX / chartW * windowMinutes)
+                    const proposed = dragState.current.startOffset + deltaMinutes
+                    const clamped = Math.min(Math.max(0, proposed), maxOffset)
+                    setWindowOffset(clamped)
+                  }
+                  const up = ()=>{
+                    dragState.current.dragging = false
+                    document.removeEventListener('mousemove', move)
+                    document.removeEventListener('touchmove', move)
+                    document.removeEventListener('mouseup', up)
+                    document.removeEventListener('touchend', up)
+                  }
+                  document.addEventListener('mousemove', move)
+                  document.addEventListener('touchmove', move)
+                  document.addEventListener('mouseup', up)
+                  document.addEventListener('touchend', up)
+                }}
+                onTouchStart={(e)=>{
+                  const t = e.touches[0]
+                  dragState.current.dragging = true
+                  dragState.current.startX = t.clientX
+                  dragState.current.startOffset = windowOffset
+                  const move = (ev: any)=>{
+                    const touch = ev.touches ? ev.touches[0] : ev
+                    const clientX = touch.clientX
+                    const deltaX = clientX - dragState.current.startX
+                    const container = chartContainerRef.current
+                    if(!container) return
+                    const rect = container.getBoundingClientRect()
+                    const chartW = rect.width
+                    if(chartW <= 0) return
+                    const deltaMinutes = Math.round(-deltaX / chartW * windowMinutes)
+                    const proposed = dragState.current.startOffset + deltaMinutes
+                    const clamped = Math.min(Math.max(0, proposed), maxOffset)
+                    setWindowOffset(clamped)
+                  }
+                  const up = ()=>{
+                    dragState.current.dragging = false
+                    document.removeEventListener('mousemove', move)
+                    document.removeEventListener('touchmove', move)
+                    document.removeEventListener('mouseup', up)
+                    document.removeEventListener('touchend', up)
+                  }
+                  document.addEventListener('mousemove', move)
+                  document.addEventListener('touchmove', move)
+                  document.addEventListener('mouseup', up)
+                  document.addEventListener('touchend', up)
+                }}
+                style={{width:760, cursor:'grab'}}
+              >
+                <LineChart
+                  counts={windowCounts}
+                  startMinute={windowStart}
+                  width={760}
+                  height={160}
+                />
 
-                  {/* AM / PM */}
-                  <div
-                    style={{
-                      fontSize: 16,
-                      fontWeight: 'normal',
-                      marginLeft: 6,
-                      marginTop: 4,
-                      color: '#9ca3af',
-                    }}
-                  >
-                    {period}
-                  </div>
-                </div>
+              </div>
+            </div>
+            <div style={{width:56,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:6}}>
+              <button onClick={()=>handleZoomChange(Math.min(100, zoomPercent+10))} style={{fontSize:24, color:'white', cursor:'pointer', backgroundColor:'transparent', border:'none'}}>+</button>
+              <div style={{height:60,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={zoomPercent}
+                  onChange={(e)=>handleZoomChange(Number(e.target.value))}
+                  style={{transform:'rotate(-90deg)', width:60, height:2, background:'transparent', cursor:'pointer'}}
+                />
+              </div>
+              <button onClick={()=>handleZoomChange(Math.max(0, zoomPercent-10))} style={{fontSize:24, color:'white', cursor:'pointer', backgroundColor:'transparent', border:'none'}}>-</button>
+            </div>
+          </div>
+          {/* Digital Clock */}
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                fontFamily: 'monospace',
+                color: '#fff',
+                padding: '8px 16px',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 48,
+                  fontWeight: 'normal',
+                  lineHeight: 1,
+                  fontFamily:'Inter, system-ui, sans-serif'
+                }}
+              >
+                {time}
+              </div>
+
+              <div
+                style={{
+                  fontSize: 16,
+                  fontWeight: 'normal',
+                  marginLeft: 1,
+                  marginTop: 4,
+                  color: '#9ca3af',
+                }}
+              >
+                {period}
               </div>
             </div>
           </div>
         </div>
 
         <div style={{marginTop:12}}>
-          {/* Line chart showing per-minute counts for the selected window */}
-            {/* <div style={{display:'flex',alignItems:'stretch',gap:8,marginBottom:12}}>
-              <div style={{flex:'0 0 auto', width:760, position:'relative'}}>
-                <div
-                  ref={chartContainerRef}
-                  onMouseDown={(e)=>{
-                    dragState.current.dragging = true
-                    dragState.current.startX = e.clientX
-                    dragState.current.startOffset = windowOffset
-                    const move = (ev: any)=>{
-                      const evt = ev as MouseEvent
-                      let clientX = evt.clientX
-                      const deltaX = clientX - dragState.current.startX
-                      const container = chartContainerRef.current
-                      if(!container) return
-                      const rect = container.getBoundingClientRect()
-                      const chartW = rect.width
-                      if(chartW <= 0) return
-                      const deltaMinutes = Math.round(-deltaX / chartW * windowMinutes)
-                      const proposed = dragState.current.startOffset + deltaMinutes
-                      const clamped = Math.min(Math.max(0, proposed), maxOffset)
-                      setWindowOffset(clamped)
-                    }
-                    const up = ()=>{
-                      dragState.current.dragging = false
-                      document.removeEventListener('mousemove', move)
-                      document.removeEventListener('touchmove', move)
-                      document.removeEventListener('mouseup', up)
-                      document.removeEventListener('touchend', up)
-                    }
-                    document.addEventListener('mousemove', move)
-                    document.addEventListener('touchmove', move)
-                    document.addEventListener('mouseup', up)
-                    document.addEventListener('touchend', up)
-                  }}
-                  onTouchStart={(e)=>{
-                    const t = e.touches[0]
-                    dragState.current.dragging = true
-                    dragState.current.startX = t.clientX
-                    dragState.current.startOffset = windowOffset
-                    const move = (ev: any)=>{
-                      const touch = ev.touches ? ev.touches[0] : ev
-                      const clientX = touch.clientX
-                      const deltaX = clientX - dragState.current.startX
-                      const container = chartContainerRef.current
-                      if(!container) return
-                      const rect = container.getBoundingClientRect()
-                      const chartW = rect.width
-                      if(chartW <= 0) return
-                      const deltaMinutes = Math.round(-deltaX / chartW * windowMinutes)
-                      const proposed = dragState.current.startOffset + deltaMinutes
-                      const clamped = Math.min(Math.max(0, proposed), maxOffset)
-                      setWindowOffset(clamped)
-                    }
-                    const up = ()=>{
-                      dragState.current.dragging = false
-                      document.removeEventListener('mousemove', move)
-                      document.removeEventListener('touchmove', move)
-                      document.removeEventListener('mouseup', up)
-                      document.removeEventListener('touchend', up)
-                    }
-                    document.addEventListener('mousemove', move)
-                    document.addEventListener('touchmove', move)
-                    document.addEventListener('mouseup', up)
-                    document.addEventListener('touchend', up)
-                  }}
-                  style={{width:760, cursor:'grab'}}
-                >
-                  <LineChart
-                    counts={windowCounts}
-                    startMinute={windowStart}
-                    width={760}
-                    height={160}
-                  />
-
-                </div>
-              </div>
-              <div style={{width:56,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:6}}>
-                <button onClick={()=>handleZoomChange(Math.min(100, zoomPercent+10))} style={{fontSize:24, color:'white', cursor:'pointer', backgroundColor:'transparent', border:'none'}}>+</button>
-                <div style={{height:60,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={zoomPercent}
-                    onChange={(e)=>handleZoomChange(Number(e.target.value))}
-                    style={{transform:'rotate(-90deg)', width:60, height:2, background:'transparent', cursor:'pointer'}}
-                  />
-                </div>
-                <button onClick={()=>handleZoomChange(Math.max(0, zoomPercent-10))} style={{fontSize:24, color:'white', cursor:'pointer', backgroundColor:'transparent', border:'none'}}>-</button>
-              </div>
-            </div> */}
+         
 
           {/* Scrollable time rows container */}
           <div
@@ -467,9 +492,9 @@ export default function ShiftView(){
             }}
           >
             {rows.map((r,idx)=> (
-              <div key={idx} className="hour-row" style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,paddingLeft:8,paddingRight:8}}>
-                <div style={{width:64,textAlign:'right',paddingRight:8,color:'#cbd5da',fontFamily:'monospace'}}><strong>{r.label}</strong></div>
-                <div style={{flex:1}}>
+              <div key={idx} className="hour-row" style={{display:'flex',gap:8,marginBottom:8,paddingLeft:8,paddingRight:8}}>
+                <div style={{minWidth:48,textAlign:'right',paddingRight:8,color:'#cbd5da',fontFamily:'monospace'}}><strong style={{width:16}}>{r.label}</strong></div>
+                <div style={{}}>
                   <TimelineStrip segments={r.segments} showGuides={true} hoursCount={1} windowStart={idx * 3600} />
                 </div>
                 <div style={{width:96,textAlign:'right',paddingLeft:12,color:'#9fe49b'}}><strong>{r.rightCount}</strong></div>

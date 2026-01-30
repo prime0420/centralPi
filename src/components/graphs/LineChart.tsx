@@ -73,7 +73,9 @@ export default function LineChart({
   const plotWidth = Math.max(20, width - leftMargin - rightMargin);
   const plotHeight = Math.max(20, height - topMargin - bottomMargin);
 
-  const maxTick = 30;
+  const maxCount = Math.max(...counts.map(c => (typeof c === 'number' ? c : 0)));
+  const niceMax = Math.max(30, Math.ceil(maxCount / 10) * 10);
+  const maxTick = niceMax;
 
   const n = counts.length;
   const denom = Math.max(1, n - 1);
@@ -118,8 +120,8 @@ export default function LineChart({
       const xCross = p1.x + t * (p2.x - p1.x);
       const yCross = topMargin + ((maxTick - threshold) / maxTick) * plotHeight;
 
-      const color1 = v1 > threshold ? "#fff" : "#eff86f";
-      const color2 = v2 > threshold ? "#fff" : "#eff86f";
+      const color1 = v1 > threshold ? "#fff" : "#e7f154";
+      const color2 = v2 > threshold ? "#fff" : "#e7f154";
 
       segments.push(
         <line
@@ -148,9 +150,11 @@ export default function LineChart({
     }
   }
 
-  // y-axis ticks 0,10,20,30 + grid
+  // y-axis ticks: choose 4 horizontal ticks (including 0 and maxTick)
   const yTicks: JSX.Element[] = [];
-  for (let t = 0; t <= 30; t += 10) {
+  const yTickCount = 4;
+  for (let i = 0; i <= yTickCount; i++) {
+    const t = Math.round((maxTick * i) / yTickCount);
     const y = topMargin + ((maxTick - t) / maxTick) * plotHeight;
     yTicks.push(
       <text
@@ -240,9 +244,11 @@ export default function LineChart({
 
   return (
     <div>
-      <text x={8} y={14} fill="#cfe6df" fontSize={12}>
-        Pcs/min
-      </text>
+      <div style={{marginLeft:'8px', paddingLeft:'18px', borderBottom:'1.5px solid #22C55E', width:'120px', paddingBottom:'4px', marginBottom:'4px'}}>
+        <text x={8} y={14} fill="#cfe6df"  fontSize={12}>
+          Pcs/min
+        </text>
+      </div>
       <svg width={width} height={height} style={{ background: "#000000" }}>
 
       
@@ -275,7 +281,7 @@ export default function LineChart({
           cx={p.x}
           cy={p.y}
           r={1.2}
-          fill={counts[idx] > threshold ? "#fff" : "#eff86f"}
+          fill={counts[idx] > threshold ? "#fff" : "#f1e60e"}
         />
       ))}
 

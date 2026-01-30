@@ -14,7 +14,7 @@ export default function TimelineStrip({
   hoursCount,
   columnWidths,
   pixelWidth,
-  windowStart
+  windowStart 
 }: {
   segments: StatusSegment[]
   showGuides?: boolean
@@ -25,7 +25,7 @@ export default function TimelineStrip({
   windowMinutes?: number
 }){
   // console.log("TimelineStrip segments:", segments)
-  const width = pixelWidth || 820
+  const width = pixelWidth || 1320
   const height = 32
   const show = !!showGuides
   const hrs = hoursCount && hoursCount > 0 ? hoursCount : 1
@@ -48,11 +48,11 @@ export default function TimelineStrip({
 
   const getColor = (status: string) => {
     switch(status) {
-      case 'good': return '#17db28'
-      case 'warning': return '#e9e62e'
-      case 'bad': return '#b81919'
-      case 'on': return '#444'
-      case 'none': return '#1a1919'
+      case 'good': return '#0aac00'
+      case 'warning': return '#fdf502'
+      case 'bad': return '#851114'
+      case 'on': return '#707070'
+      case 'none': return '#303030'
       default: return '#000000'
     }
   }
@@ -60,7 +60,7 @@ export default function TimelineStrip({
   const clamp = (v:number, min=0, maxV=totalSeconds) => Math.max(min, Math.min(maxV, v))
 
   return (
-    <svg width={width} height={height} style={{background:'#0d0f10',borderRadius:0,overflow:'visible'}} shapeRendering="crispEdges">
+    <svg width={width} height={height} style={{background:'#0d0f10',borderRadius:0,overflow:'visible'}} shapeRendering="geometricPrecision">
       {/* Background */}
       <rect x={0} y={0} width={width} height={height} fill="#0f1112" rx={4} />
 
@@ -130,7 +130,19 @@ export default function TimelineStrip({
           const hourLeft = cumulativePx[hourIndex]
           const hourWidth = colPixels[hourIndex]
           const cx = Math.floor(hourLeft + Math.round((localSec / 3600) * hourWidth))
-          dots.push(<circle key={`dot-sec-${idx}`} cx={cx} cy={height - 6} r={3} fill="#000" stroke="#fff" strokeWidth={1.6} />)
+          const x = Math.round(cx)
+          const y = Math.round(height - 6)
+          dots.push(<circle key={`dot-sec-${idx}`} cx={cx} cy={height - 6} r={2.8} fill="#000" stroke="#dfd5d5" strokeWidth={1.8} />)
+          // dots.push(<circle
+          //             key={`dot-sec-${idx}`}
+          //             cx={x}
+          //             cy={y}
+          //             r={2.8}
+          //             fill="#111"
+          //             stroke="rgba(255,255,255,0.8)"
+          //             strokeWidth={1.8}
+          //           />
+          //           )
         })
         return dots
       })()}
