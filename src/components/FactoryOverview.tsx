@@ -6,7 +6,7 @@ import DateSelector from './DateSelector'
 import { useSelectedDate } from '../context/DateContext'
 import { useSelectedMachine } from '../context/MachineContext'
 import { fetchMachines, fetchLogs, getLogsForDate, aggregateProductionData, calculateMachineHealth, getEventStatus, Machine as ApiMachine, LogEntry } from '../services/api'
-import socket from '../lib/clientSocket'
+// import socket from '../lib/clientSocket'
 
 type Machine = {id: string; percent: number; partCount: string; productionData?: number[]}
 
@@ -74,7 +74,7 @@ export default function FactoryOverview({ onMachineSelect }: { onMachineSelect?:
       loadData()
     }
 
-    socket.on('log-created', onLogCreated)
+    // socket.on('log-created', onLogCreated)
 
     // Refresh data every minute (60000 ms)
     const interval = setInterval(() => {
@@ -83,7 +83,7 @@ export default function FactoryOverview({ onMachineSelect }: { onMachineSelect?:
 
     return () => {
       clearInterval(interval)
-      socket.off('log-created', onLogCreated)
+      // socket.off('log-created', onLogCreated)
     }
   }, [selectedDate])
 

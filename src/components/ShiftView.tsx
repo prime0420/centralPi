@@ -6,7 +6,6 @@ import DateSelector from './DateSelector'
 import { useSelectedDate } from '../context/DateContext'
 import { useSelectedMachine } from '../context/MachineContext'
 import { fetchLogs, getEventStatus, groupLogsByHour, getHourMinuteSecond } from '../services/api'
-import socket from '../lib/clientSocket'
 
 // Format time as HH:MM
 function formatTime(date: Date) {
@@ -68,7 +67,6 @@ export default function ShiftView(){
       }
     }
 
-    socket.on('log-created', onLogCreated)
 
     // Refresh logs every minute (60000 ms)
     const interval = setInterval(() => {
@@ -77,7 +75,6 @@ export default function ShiftView(){
 
     return () => {
       clearInterval(interval)
-      socket.off('log-created', onLogCreated)
     }
   }, [selectedMachine, dateStr])
 

@@ -20,6 +20,67 @@ console.log('initSqlJs typeof', typeof initSqlJs);
     const filebuffer = fs.readFileSync(dbPath)
     db = new SQL.Database(new Uint8Array(filebuffer))
     console.log('Opened DB at', dbPath)
+    // Start polling a realtime source (Python server) and persist new logs to DB
+    try {
+      const REALTIME_SOURCE = process.env.REALTIME_SOURCE_URL || 'http://localhost:8000/api/current-log'
+      const REALTIME_INTERVAL = parseInt(process.env.REALTIME_INTERVAL_MS || '10000', 10)
+
+      async function fetchAndSaveRealtime() {
+        try {
+          const resp = await fetch(REALTIME_SOURCE)
+          if (!resp.ok) return
+          const payload = await resp.json()
+          const entries = Array.isArray(payload) ? payload : [payload]
+
+          for (const entry of entries) {
+            const machine_name = String(entry.machine_name || entry.machine || entry.name || '')
+            const event = String(entry.event || '')
+            const total_count = Number(entry.total_count || 0)
+            const interval_count = Number(entry.interval_count || 0)
+            const machine_rate = Number(entry.machine_rate || 0)
+            const comments = String(entry.comments || '')
+            const mo = String(entry.mo || '')
+            const part_number = String(entry.part_number || '')
+            const operator_id = String(entry.operator_id || '')
+            const shift_number = Number(entry.shift_number || 0)
+            const created_at = entry.created_at || new Date().toISOString().replace('T', ' ').split('.')[0]
+
+            const safeMachine = machine_name.replace(/'/g, "''")
+            const safeCreated = String(created_at).replace(/'/g, "''")
+
+            // Check for an existing identical timestamped entry to avoid duplicates
+            const checkQ = `SELECT COUNT(*) as cnt FROM Logs WHERE machine_name='${safeMachine}' AND created_at='${safeCreated}'`
+            const res = db.exec(checkQ)
+            let exists = false
+            if (res && res[0] && res[0].values && res[0].values[0]) {
+              const cnt = Number(res[0].values[0][0])
+              exists = cnt > 0
+            }
+
+            if (!exists) {
+              const insertQ = `INSERT INTO Logs (machine_name,event,total_count,interval_count,machine_rate,comments,mo,part_number,operator_id,shift_number,created_at) VALUES ('${safeMachine}','${String(event).replace(/'/g, "''")}',${total_count},${interval_count},${machine_rate},'${String(comments).replace(/'/g, "''")}','${String(mo).replace(/'/g, "''")}','${String(part_number).replace(/'/g, "''")}','${String(operator_id).replace(/'/g, "''")}',${shift_number},'${safeCreated}')`
+              try {
+                db.run(insertQ)
+                const data = db.export()
+                fs.writeFileSync(dbPath, Buffer.from(data))
+                console.log('Saved realtime log for', machine_name, created_at)
+              } catch (e) {
+                console.error('Failed to insert realtime log:', e && e.message)
+              }
+            }
+          }
+        } catch (e) {
+          // keep polling even if errors occur
+          console.error('Realtime fetch error', e && e.message)
+        }
+      }
+
+      // initial fetch + periodic
+      fetchAndSaveRealtime()
+      setInterval(fetchAndSaveRealtime, REALTIME_INTERVAL)
+    } catch (e) {
+      console.error('Failed to start realtime polling:', e && e.message)
+    }
   } catch (err) {
     console.error('Could not open DB at', dbPath)
     console.error(err && err.message)
@@ -77,107 +138,5 @@ app.get('/api/logs', (req, res) => {
   }
 })
 
-// POST endpoint to insert a log (also handled via socket)
-app.post('/api/logs', (req, res) => {
-  if (!db) return res.status(500).json({ error: 'database not available' })
-  try {
-    const p = req.body || {}
-    const machine_name = (p.machine_name || p.machine || '').replace(/'/g, "''")
-    const event = (p.event || '').replace(/'/g, "''")
-    const total_count = Number(p.total_count || 0)
-    const interval_count = Number(p.interval_count || 0)
-    const machine_rate = Number(p.machine_rate || 0)
-    const comments = p.comments ? (String(p.comments).replace(/'/g, "''")) : null
-    const mo = p.mo ? (String(p.mo).replace(/'/g, "''")) : null
-    const part_number = p.part_number ? (String(p.part_number).replace(/'/g, "''")) : null
-    const operator_id = p.operator_id ? (String(p.operator_id).replace(/'/g, "''")) : null
-    const shift_number = p.shift_number ? Number(p.shift_number) : null
-
-    const insertSql = `INSERT INTO Logs (machine_name, event, total_count, interval_count, machine_rate, comments, mo, part_number, operator_id, shift_number, created_at) VALUES ('${machine_name}', '${event}', ${total_count}, ${interval_count}, ${machine_rate}, ${comments ? "'"+comments+"'" : 'NULL'}, ${mo ? "'"+mo+"'" : 'NULL'}, ${part_number ? "'"+part_number+"'" : 'NULL'}, ${operator_id ? "'"+operator_id+"'" : 'NULL'}, ${shift_number !== null ? shift_number : 'NULL'}, datetime('now','localtime'))`
-
-    db.run(insertSql)
-
-    const last = db.exec('SELECT last_insert_rowid() AS id')
-    const lastId = (last && last[0] && last[0].values && last[0].values[0]) ? last[0].values[0][0] : null
-    const recRes = db.exec(`SELECT * FROM Logs WHERE id = ${lastId}`)
-    const recs = resultToRows(recRes[0])
-    const record = recs[0]
-
-    // persist DB to disk
-    try {
-      const buffer = Buffer.from(db.export())
-      fs.writeFileSync(dbPath, buffer)
-    } catch (err) {
-      console.error('Failed to persist DB to disk', err && err.message)
-    }
-
-    // emit via socket.io if available
-    try {
-      if (global.io) global.io.emit('log-created', { machine_name, log: record })
-    } catch (err) {
-      // ignore socket errors
-    }
-
-    res.json({ success: true, id: lastId, log: record })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-const http = require('http')
-const { Server: SocketIOServer } = require('socket.io')
-
-const port = process.env.PORT || 4000
-const server = http.createServer(app)
-const io = new SocketIOServer(server, { cors: { origin: '*' } })
-
-// expose globally so other modules can emit without importing io
-global.io = io
-
-io.on('connection', (socket) => {
-  console.log('socket connected', socket.id)
-
-  socket.on('log', (p) => {
-    try {
-      if (!db) return
-      const machine_name = (p.machine_name || p.machine || '').replace(/'/g, "''")
-      const event = (p.event || '').replace(/'/g, "''")
-      const total_count = Number(p.total_count || 0)
-      const interval_count = Number(p.interval_count || 0)
-      const machine_rate = Number(p.machine_rate || 0)
-      const comments = p.comments ? (String(p.comments).replace(/'/g, "''")) : null
-      const mo = p.mo ? (String(p.mo).replace(/'/g, "''")) : null
-      const part_number = p.part_number ? (String(p.part_number).replace(/'/g, "''")) : null
-      const operator_id = p.operator_id ? (String(p.operator_id).replace(/'/g, "''")) : null
-      const shift_number = p.shift_number ? Number(p.shift_number) : null
-
-      const insertSql = `INSERT INTO Logs (machine_name, event, total_count, interval_count, machine_rate, comments, mo, part_number, operator_id, shift_number, created_at) VALUES ('${machine_name}', '${event}', ${total_count}, ${interval_count}, ${machine_rate}, ${comments ? "'"+comments+"'" : 'NULL'}, ${mo ? "'"+mo+"'" : 'NULL'}, ${part_number ? "'"+part_number+"'" : 'NULL'}, ${operator_id ? "'"+operator_id+"'" : 'NULL'}, ${shift_number !== null ? shift_number : 'NULL'}, datetime('now','localtime'))`
-
-      db.run(insertSql)
-
-      const last = db.exec('SELECT last_insert_rowid() AS id')
-      const lastId = (last && last[0] && last[0].values && last[0].values[0]) ? last[0].values[0][0] : null
-      const recRes = db.exec(`SELECT * FROM Logs WHERE id = ${lastId}`)
-      const recs = resultToRows(recRes[0])
-      const record = recs[0]
-
-      // persist DB to disk
-      try {
-        const buffer = Buffer.from(db.export())
-        fs.writeFileSync(dbPath, buffer)
-      } catch (err) {
-        console.error('Failed to persist DB to disk', err && err.message)
-      }
-
-      io.emit('log-created', { machine_name, log: record })
-    } catch (err) {
-      console.error('socket log handler error', err && err.message)
-    }
-  })
-
-  socket.on('disconnect', () => {
-    console.log('socket disconnected', socket.id)
-  })
-})
-
-server.listen(port, () => console.log('Server listening on', port))
+const port = process.env.PORT || 5000
+const server = app.listen(port, () => console.log('Server listening on', port))

@@ -20,15 +20,8 @@ export default function DateSelector() {
         const availableDates = getAvailableDates(logs)
         setDates(availableDates)
         console.log("Available dates:", availableDates)
-        // Set selected date to first available date if current selection is not in available dates
-        if (availableDates.length > 0) {
-          const isCurrentDateAvailable = availableDates.some(d => 
-            d.toISOString().split('T')[0] === selectedDate.toISOString().split('T')[0]
-          )
-          if (!isCurrentDateAvailable) {
-            setSelectedDate(new Date(availableDates[0]))
-          }
-        }
+        // Keep current selected date (defaults to today). If today's date has no saved logs
+        // we'll still keep it so the UI can show live data from the server API.
       } catch (error) {
         console.error('Failed to load available dates:', error)
       } finally {
@@ -64,22 +57,30 @@ export default function DateSelector() {
     return <div className="date-selector-container"><span>Loading dates...</span></div>
   }
 
+  // Ensure the select contains the currently selected date (e.g., today) even
+  // if there are no saved logs yet so the UI can show live data.
+  const selectedDateStr = formatDateForValue(selectedDate)
+  const dateStrs = dates.map(d => formatDateForValue(d))
+  const optionsDates = dateStrs.includes(selectedDateStr)
+    ? dates
+    : [selectedDate, ...dates]
+
   return (
     <div className="date-selector-container">
       <label htmlFor="date-select">Select Date:</label>
       <select
         ref={selectRef}
         id="date-select"
-        value={formatDateForValue(selectedDate)}
+        value={selectedDateStr}
         onChange={handleDateChange}
         className="date-dropdown"
       >
-        {dates.length === 0 ? (
+        {optionsDates.length === 0 ? (
           <option>No data available</option>
         ) : (
-          dates.map(date => (
+          optionsDates.map(date => (
             <option key={formatDateForValue(date)} value={formatDateForValue(date)}>
-              {formatDateForDisplay(date)}
+              {formatDateForDisplay(date)}{formatDateForValue(date) === formatDateForValue(new Date()) ? ' (Today - live)' : ''}
             </option>
           ))
         )}
