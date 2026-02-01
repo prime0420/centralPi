@@ -23,7 +23,13 @@ function formatTime(date: Date) {
 export default function ShiftView(){
   const { selectedDate } = useSelectedDate()
   const { selectedMachine } = useSelectedMachine()
-  const dateStr = selectedDate.toISOString().split('T')[0]
+  // const dateStr = selectedDate.toISOString().split('T')[0]
+  const dateStr = [
+    selectedDate.getFullYear(),
+    String(selectedDate.getMonth() + 1).padStart(2, '0'),
+    String(selectedDate.getDate()).padStart(2, '0'),
+  ].join('-')
+
   // zoomPercent: 0 -> show 180 minutes (3h), 100 -> show 30 minutes
   const [zoomPercent, setZoomPercent] = useState(0)
   // offset in minutes from the base window start (panning)
@@ -71,7 +77,7 @@ export default function ShiftView(){
     // Refresh logs every minute (60000 ms)
     const interval = setInterval(() => {
       loadLogs()
-    }, 60000)
+    }, 1000)
 
     return () => {
       clearInterval(interval)
@@ -326,7 +332,7 @@ export default function ShiftView(){
         
       </div>
       <h2>The Machine (Shift) View - {selectedMachine ? selectedMachine : 'All Machines'} - {selectedDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</h2>
-      {loading && <p>Loading data from database...</p>}
+      {/* {loading && <p>Loading data from database...</p>} */}
       {logs.length === 0 && !loading && <p>No data available for this selection</p>}
       <div className="card">
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:16}}>

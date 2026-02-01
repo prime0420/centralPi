@@ -1,8 +1,8 @@
 import React from 'react'
 
-type Props = {id: string; percent: number; partCount: string; productionData?: number[]}
+type Props = {id: string; percent: number; partCount: string; productionData?: number[], power?: 'On' | 'Off'}
 
-export default function MachineCard({id, percent, partCount, productionData}: Props){
+export default function MachineCard({id, percent, partCount, productionData, power }: Props){
   // color scheme per percent
   const isStopped = percent === 0
   const isGood = percent > 75 && !isStopped
@@ -13,10 +13,11 @@ export default function MachineCard({id, percent, partCount, productionData}: Pr
     good: { primary: '#13c247', secondary: '#25a94a', text: '#fff' },
     warning: { primary: '#FFD700', secondary: '#F2C200', text: '#111' },
     bad: { primary: '#e61d1d', secondary: '#c73a3a', text: '#fff' },
+    power: { primary: '#5f2cd6', secondary: '#3b4bdd', text: '#ccc' },
     stopped: { primary: '#2b2f33', secondary: '#303030', text: '#ddd' }
   }
 
-  const palette = isStopped ? palettes.stopped : isGood ? palettes.good : isWarning ? palettes.warning : palettes.bad
+  const palette = isStopped ? palettes.stopped : isGood ? palettes.good : isWarning ? palettes.warning : palettes.bad ? palettes.bad : palettes.power
   const bgPrimary = palette.primary
   const bgSecondary = palette.secondary
   const textColor = palette.text

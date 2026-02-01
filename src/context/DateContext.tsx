@@ -19,6 +19,7 @@ export function DateProvider({ children }: { children: React.ReactNode }) {
 
 export function useSelectedDate() {
   const context = useContext(DateContext)
+  // console.log("useSelectedDate:", context)
   if (!context) {
     throw new Error('useSelectedDate must be used within DateProvider')
   }

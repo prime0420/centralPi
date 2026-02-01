@@ -202,7 +202,7 @@ export default function TimelineView({ onMachineSelect }: { onMachineSelect?: ()
     <div>
       <DateSelector />
       <h2>Factory (Timeline) View - {selectedDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</h2>
-      {loading && <p>Loading data from database...</p>}
+      {/* {loading && <p>Loading data from database...</p>} */}
       <div className="card">
         {rows.map((r: any) => {
           const rowPanOffset = getRowPanOffset(r.id)

@@ -16,10 +16,10 @@ export default function DateSelector() {
       setLoading(true)
       try {
         const logs = await fetchLogs()
-        console.log("**log0:", logs.length, logs[0])
+        // console.log("**log0:", logs.length, logs[0])
         const availableDates = getAvailableDates(logs)
         setDates(availableDates)
-        console.log("Available dates:", availableDates)
+        // console.log("Available dates:", availableDates)
         // Keep current selected date (defaults to today). If today's date has no saved logs
         // we'll still keep it so the UI can show live data from the server API.
       } catch (error) {
@@ -34,6 +34,7 @@ export default function DateSelector() {
 
   const handleDateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedValue = e.target.value
+    // console.log("DateSelector - selected value:", selectedValue)
     const date = dates.find(d => d.toISOString().split('T')[0] === selectedValue)
     if (date) {
       setSelectedDate(new Date(date))
@@ -64,7 +65,8 @@ export default function DateSelector() {
   const optionsDates = dateStrs.includes(selectedDateStr)
     ? dates
     : [selectedDate, ...dates]
-
+  // console.log("Options dates:", optionsDates[0])
+  // console.log("current date str:", new Date())
   return (
     <div className="date-selector-container">
       <label htmlFor="date-select">Select Date:</label>
@@ -80,7 +82,7 @@ export default function DateSelector() {
         ) : (
           optionsDates.map(date => (
             <option key={formatDateForValue(date)} value={formatDateForValue(date)}>
-              {formatDateForDisplay(date)}{formatDateForValue(date) === formatDateForValue(new Date()) ? ' (Today - live)' : ''}
+              {formatDateForDisplay(date) !== formatDateForDisplay(new Date()) ?  formatDateForDisplay(date) : ''}{formatDateForDisplay(date) === formatDateForDisplay(new Date()) ? formatDateForDisplay(new Date()) + ' Today' : ''}
             </option>
           ))
         )}
